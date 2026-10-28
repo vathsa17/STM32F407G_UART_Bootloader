@@ -63,5 +63,6 @@ typedef struct
 
 void NVIC_SetPriority(uint8_t IRQNumber,uint8_t IT_Priority);
 void NVIC_EnableIRQ(uint8_t IRQNumber);
+void NVIC_DisableIRQ(uint8_t IRQNumber);
 
 #endif /* CORTEXM4_H_ */

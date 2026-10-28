@@ -188,3 +188,133 @@ Flash_Status_t Flash_TestUnlockLock(void)
 
     return FLASH_OK;
 }
+
+
+
+Flash_Status_t Flash_ProgramBytes( uint32_t address, const uint8_t *data, uint32_t length)
+{
+    Flash_Status_t status;
+    uint32_t offset = 0U;
+
+    /* Validate arguments. */
+    if ((data == 0) || (length == 0U))
+    {
+        return FLASH_ERROR_INVALID_ARGUMENT;
+    }
+
+    /* Check that the starting address is inside application Flash. */
+    if ((address < APP_FLASH_START) ||
+        (address >= APP_FLASH_END))
+    {
+        return FLASH_ERROR_INVALID_ADDRESS;
+    }
+
+    /* Check the requested byte range without risking integer overflow. */
+    if (length > (APP_FLASH_END - address))
+    {
+        return FLASH_ERROR_INVALID_ADDRESS;
+    }
+
+    /* STM32F407 word programming requires 4-byte alignment. */
+    if ((address & 0x3U) != 0U)
+    {
+        return FLASH_ERROR_INVALID_ADDRESS;
+    }
+
+    /*
+     * A partial final word is padded with 0xFF.
+     * Ensure that the complete physical word remains in application Flash.
+     */
+    uint32_t finalWordSize = (length + 3U) & ~3U;
+
+    if (finalWordSize > (APP_FLASH_END - address))
+    {
+        return FLASH_ERROR_INVALID_ADDRESS;
+    }
+
+    status = Flash_Unlock();
+
+    if (status != FLASH_OK)
+    {
+        return status;
+    }
+
+    status = Flash_WaitForLastOperation();
+
+    if (status != FLASH_OK)
+    {
+        if ((FLASH_REG->SR & FLASH_SR_BSY) == 0U)
+        {
+            Flash_Lock();
+        }
+
+        return status;
+    }
+
+    /* Clear old status flags and configure 32-bit programming. */
+    FLASH_REG->SR = FLASH_SR_CLEAR_MASK;
+
+    FLASH_REG->CR &= ~(FLASH_CR_SER |
+                       FLASH_CR_MER |
+                       FLASH_CR_SNB_Msk |
+                       FLASH_CR_PSIZE_Msk);
+
+    FLASH_REG->CR |= FLASH_CR_PSIZE_WORD;
+
+    /* Enable programming mode. */
+    FLASH_REG->CR |= FLASH_CR_PG;
+
+    while (offset < length)
+    {
+        uint32_t word = 0xFFFFFFFFUL;
+        uint32_t remaining = length - offset;
+        uint32_t bytesToProgram =
+            (remaining >= 4U) ? 4U : remaining;
+
+        /*
+         * Construct a little-endian word.
+         * Unused bytes in the final word remain 0xFF.
+         */
+        for (uint32_t i = 0U; i < bytesToProgram; i++)
+        {
+            uint32_t shift = i * 8U;
+
+            word &= ~(0xFFUL << shift);
+            word |= ((uint32_t)data[offset + i] << shift);
+        }
+
+        /* Clear status flags before starting this word. */
+        FLASH_REG->SR = FLASH_SR_CLEAR_MASK;
+
+        /* Program the word to Flash. */
+        *(volatile uint32_t *)(address + offset) = word;
+
+        status = Flash_WaitForLastOperation();
+
+        if (status != FLASH_OK)
+        {
+            break;
+        }
+
+        /* Verify the programmed word. */
+        if (*(volatile uint32_t *)(address + offset) != word)
+        {
+            status = FLASH_ERROR_OPERATION;
+            break;
+        }
+
+        offset += bytesToProgram;
+    }
+
+    /*
+     * Do not modify the controller while it is busy.
+     * Otherwise, disable programming and lock Flash.
+     */
+    if ((FLASH_REG->SR & FLASH_SR_BSY) == 0U)
+    {
+        FLASH_REG->CR &= ~FLASH_CR_PG;
+        Flash_Lock();
+    }
+
+    return status;
+}

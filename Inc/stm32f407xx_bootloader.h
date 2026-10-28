@@ -12,7 +12,7 @@
 
 #define PROTOCOL_SOF            0xAAU
 
-#define CMD_BEGIN               0x01U
+#define CMD_METADATA              0x01U
 #define CMD_DATA                0x02U
 #define CMD_END                 0x03U
 
@@ -71,6 +71,11 @@ typedef struct
     uint32_t imageSize;
     uint32_t expectedImageCrc32;
     uint32_t expectedOffset;
+
+    uint32_t lastPacketOffset;
+    uint32_t lastPacketLength;
+    uint8_t  lastPacketValid;
+
     uint8_t metadataValid;
     uint8_t active;
 } FirmwareTransfer_t;
@@ -82,6 +87,18 @@ typedef enum
     TRANSFER_ERR_FLASH
 } TransferStatus_t;
 
+
+typedef enum
+{
+    DATA_OK,
+    DATA_ERR_NULL,
+    DATA_ERR_MODE,
+    DATA_ERR_COMMAND,
+    DATA_ERR_LENGTH,
+    DATA_ERR_OFFSET,
+    DATA_ERR_SIZE,
+    DATA_ERR_FLASH
+} DataStatus_t;
 
 #define SCB_VTOR \
     (*(volatile uint32_t *)0xE000ED08UL)
@@ -96,4 +113,6 @@ MetadataStatus_t Protocol_ValidatePacket(const BootPacket_t *packet);
 void Protocol_Init(void);
 BootPacket_t *Protocol_GetPacket(void);
 MetadataStatus_t Bootloader_ProcessMetadata(const BootPacket_t *packet);
+DataStatus_t Bootloader_ProcessData(const BootPacket_t *packet);
+TransferStatus_t Bootloader_PrepareFirmwareTransfer(void);
 #endif /* STM32F407XX_BOOTLOADER_H_ */

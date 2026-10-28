@@ -233,6 +233,11 @@ uint32_t Get_PLLClk();
 uint32_t RCC_GetPCLK1Val();
 uint32_t RCC_GetPCLK2Val();
 
+
+
+
+
+
 #include "stm32f407xx_gpio_driver.h"
 #include "stm32f407xx_usart_driver.h"
 //#include "stm32f407xx_can_driver.h"

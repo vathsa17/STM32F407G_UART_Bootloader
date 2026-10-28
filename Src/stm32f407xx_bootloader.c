@@ -144,8 +144,20 @@ void Protocol_Init(void)
     rxPacket.crc = 0U;
 }
 
+
+
+volatile uint32_t protocolTrace[32];
+volatile uint32_t protocolTraceIndex = 0U;
+
+
 Protocol_Result_t Protocol_ProcessByte(uint8_t byte)
 {
+
+    if (protocolTraceIndex < 32U)
+    {
+        protocolTrace[protocolTraceIndex] = byte;
+        protocolTraceIndex++;
+    }
     switch (rxState)
     {
         case RX_WAIT_SOF:
@@ -262,13 +274,13 @@ MetadataStatus_t Protocol_ValidatePacket(const BootPacket_t *packet)
 
     if (packet == 0)
     {
-        return 0U;
+        return METADATA_STATUS_ERROR;
     }
 
     /* Reject an invalid payload length before accessing the payload. */
     if (packet->length > PROTOCOL_MAX_PAYLOAD)
     {
-        return 0U;
+        return METADATA_STATUS_ERROR;
     }
 
     /* Reconstruct CMD + LEN in wire format. */
@@ -288,7 +300,17 @@ MetadataStatus_t Protocol_ValidatePacket(const BootPacket_t *packet)
     calculatedCrc = CRC16_Calculate(crcInput, crcInputLength);
 
     /* Compare against the CRC received from UART. */
-    return (calculatedCrc == packet->crc) ? METADATA_STATUS_OK : METADATA_STATUS_ERROR;
+    if (calculatedCrc == packet->crc) 
+    { 
+        
+        return METADATA_STATUS_OK;
+     }
+     else
+     { 
+        Bootloader_SendString("CRC Not Matching\r\n");
+        return METADATA_STATUS_ERROR;
+        
+     }
 }
 
 
@@ -342,6 +364,9 @@ MetadataStatus_t Bootloader_ProcessMetadata(const BootPacket_t *packet)
     transfer.expectedImageCrc32 = imageCrc32;
     transfer.expectedOffset = 0U;
     transfer.metadataValid = 1U;
+    transfer.lastPacketOffset = 0U;
+    transfer.lastPacketLength = 0U;
+    transfer.lastPacketValid = 0U;
     transfer.active = 0U;
 
     return METADATA_STATUS_OK;
@@ -357,7 +382,7 @@ TransferStatus_t Bootloader_PrepareFirmwareTransfer(void)
         return TRANSFER_ERR_METADATA;
     }
 
-    if (bootloaderMode != BOOTLOADER_MODE_METADATA)
+    if (GetBootloaderMode() != BOOTLOADER_MODE_METADATA)
     {
         return TRANSFER_ERR_METADATA;
     }
@@ -379,7 +404,122 @@ TransferStatus_t Bootloader_PrepareFirmwareTransfer(void)
     /* Ready to receive firmware DATA packets. */
     transfer.expectedOffset = 0U;
     transfer.active = 1U;
-    SetBootloaderMode(BOOTLOADER_MODE_FIRMWARE);
+    
 
     return TRANSFER_OK;
+}
+
+DataStatus_t Bootloader_ProcessData(const BootPacket_t *packet)
+{
+    uint32_t offset;
+    uint32_t dataLength;
+    uint32_t remaining;
+    uint32_t destinationAddress;
+    Flash_Status_t flashStatus;
+
+    if (packet == 0)
+    {
+        return DATA_ERR_NULL;
+    }
+
+    if ((GetBootloaderMode() != BOOTLOADER_MODE_FIRMWARE) ||
+        (transfer.active != 1U) ||
+        (transfer.metadataValid != 1U))
+    {
+        return DATA_ERR_MODE;
+    }
+
+    if (packet->command != CMD_DATA)
+    {
+        return DATA_ERR_COMMAND;
+    }
+
+    /*
+     * Payload:
+     *   Bytes 0..3: firmware offset (little-endian)
+     *   Bytes 4..N: firmware data
+     *
+     * Require at least one data byte.
+     */
+    if ((packet->length <= 4U) ||
+        (packet->length > PROTOCOL_MAX_PAYLOAD))
+    {
+        return DATA_ERR_LENGTH;
+    }
+
+    offset =
+        ((uint32_t)packet->payload[0])       |
+        ((uint32_t)packet->payload[1] << 8U)  |
+        ((uint32_t)packet->payload[2] << 16U) |
+        ((uint32_t)packet->payload[3] << 24U);
+
+    dataLength = (uint32_t)packet->length - 4U;
+
+    if ((transfer.lastPacketValid == 1U) &&
+    (offset == transfer.lastPacketOffset) &&
+    (dataLength == transfer.lastPacketLength))
+    {
+        /*
+        * This matches the previous packet's offset and length.
+        * Do not program Flash again.
+        */
+        return DATA_OK;
+    }
+
+    /* Require strictly sequential DATA packets. */
+    if (offset != transfer.expectedOffset)
+    {
+        return DATA_ERR_OFFSET;
+    }
+
+
+
+
+    /* Ensure the packet fits inside the declared image. */
+    if (offset > transfer.imageSize)
+    {
+        return DATA_ERR_SIZE;
+    }
+
+    remaining = transfer.imageSize - offset;
+
+    if (dataLength > remaining)
+    {
+        return DATA_ERR_SIZE;
+    }
+
+    destinationAddress = APP_FLASH_START + offset;
+
+    /*
+     * The Flash driver currently requires a 4-byte-aligned
+     * destination address. Since APP_FLASH_START is aligned,
+     * sequential offsets must also be aligned.
+     */
+    if ((destinationAddress & 0x3U) != 0U)
+    {
+        return DATA_ERR_OFFSET;
+    }
+
+    /*
+     * Flash programming happens only after all packet checks.
+     * Flash_ProgramBytes handles final partial-word padding.
+     */
+    flashStatus = Flash_ProgramBytes(
+        destinationAddress,
+        &packet->payload[4],
+        dataLength);
+
+    if (flashStatus != FLASH_OK)
+    {
+        return DATA_ERR_FLASH;
+    }
+
+    /* Advance only after successful programming. */
+    transfer.lastPacketOffset = offset;
+    transfer.lastPacketLength = dataLength;
+    transfer.lastPacketValid = 1U;
+
+    transfer.expectedOffset += dataLength;
+
+    return DATA_OK;
 }

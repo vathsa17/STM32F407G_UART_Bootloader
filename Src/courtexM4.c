@@ -25,3 +25,13 @@ void NVIC_EnableIRQ(uint8_t IRQNumber)
 	NVIC->ISER[index] |= (0x01<<bitPos);
 }
 
+
+void NVIC_DisableIRQ(uint8_t IRQNumber)
+{
+    uint8_t index, bitPos;
+
+    index = IRQNumber / 32U;
+    bitPos = IRQNumber % 32U;
+
+    NVIC->ICER[index] = (1UL << bitPos);
+}

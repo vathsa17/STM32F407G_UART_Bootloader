@@ -17,9 +17,12 @@ typedef enum
     FLASH_ERROR_BUSY_TIMEOUT,
     FLASH_ERROR_OPERATION,
     FLASH_ERROR_INVALID_SECTOR,
-    FLASH_ERROR_UNLOCK
+    FLASH_ERROR_UNLOCK,
+    FLASH_ERROR_INVALID_ADDRESS,
+    FLASH_ERROR_INVALID_ARGUMENT
 } Flash_Status_t;
 
 Flash_Status_t Flash_EraseApplication(void);
 Flash_Status_t Flash_TestUnlockLock(void);
+Flash_Status_t Flash_ProgramBytes(uint32_t address,const uint8_t *data, uint32_t length);
 #endif

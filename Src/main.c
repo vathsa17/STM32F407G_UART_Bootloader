@@ -144,13 +144,22 @@ int main(void)
                                         
                                         if(Protocol_ValidatePacket(packet) == METADATA_STATUS_OK)
                                         {
-                                            MetadataStatus_t MetaStatus=Bootloader_ProcessMetadata();
+                                            MetadataStatus_t MetaStatus=Bootloader_ProcessMetadata(packet);
                                             if(MetaStatus==METADATA_STATUS_OK)
                                             {
                                                 TransferStatus_t transferStatus =Bootloader_PrepareFirmwareTransfer();
                                                 if(transferStatus==TRANSFER_OK)
                                                 {
+                                                    Protocol_Init();
+                                                    NVIC_DisableIRQ(IRQ_NO_USART2);
+                                                    Protocol_Init();
+                                                    SetBootloaderMode(BOOTLOADER_MODE_FIRMWARE);
+                                                    RingBuffer_Init(&RingBuffer);
+                                                    NVIC_EnableIRQ(IRQ_NO_USART2);
+
+
                                                     Bootloader_SendString("READY\r\n");
+
                                                 }
                                                 else
                                                 {
@@ -171,8 +180,34 @@ int main(void)
                                     }
                                     break;
                 case BOOTLOADER_MODE_FIRMWARE:
-                                    //ProcessData(data);
-                                    break;      
+                                    Protocol_Result_t status_ProcessBytes = Protocol_ProcessByte(data);
+                                    if(status_ProcessBytes==PROTOCOL_PACKET_READY)
+                                    {
+                                        BootPacket_t *Datapacket = Protocol_GetPacket();
+                                        if(Protocol_ValidatePacket(Datapacket) == METADATA_STATUS_OK)
+                                        {
+                                            DataStatus_t DataStatus=Bootloader_ProcessData(Datapacket);
+                                            if (DataStatus == DATA_OK)
+                                            {
+                                                Bootloader_SendString("ACK\r\n");
+                                            }
+                                            else
+                                            {
+                                                Bootloader_SendString("NAK DATA\r\n");
+                                            }
+                                        }
+                                        else
+                                        {
+                                            Bootloader_SendString("Application Validation Error\r\n");
+                                            SetBootloaderMode(BOOTLOADER_MODE_CMD);  
+                                        }
+                                    }
+                                    else if(status_ProcessBytes==PROTOCOL_INVALID)
+                                    {
+                                        Bootloader_SendString("ERR: Start Again\r\n");
+                                        SetBootloaderMode(BOOTLOADER_MODE_CMD);  
+                                    }
+                                    break;    
                 default:
                                     break;
             }
